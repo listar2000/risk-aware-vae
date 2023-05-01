@@ -23,10 +23,11 @@ class MNIST(tud.Dataset):
             x = self.transform(x)
         return x
 
-class ToTensor(object):
-    def __call__(self, sample):
-        m = torch.from_numpy(sample).type(torch.float)
-        return m
+
+def to_tensor(sample):
+    m = torch.from_numpy(sample).type(torch.float)
+    return m
+
 
 class VNet(nn.Module):
     """
@@ -52,7 +53,7 @@ class VNet(nn.Module):
         return self.mu_enc(h), self.var_enc(h)
 
     def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5*logvar)
+        std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return eps.mul(std).add_(mu)
 
@@ -99,10 +100,10 @@ class VAE(object):
         Xd: 2d array of shape (n_data, n_dim). Dev data, used for early stopping
         epochs: int, number of training epochs
         """
-        train_loader = tud.DataLoader(MNIST(Xr, transform=ToTensor()),
-            batch_size=self.batch_size, shuffle=True)
+        train_loader = tud.DataLoader(MNIST(Xr, transform=to_tensor()),
+                                      batch_size=self.batch_size, shuffle=True)
         dev_loader = tud.DataLoader(
-            MNIST(Xd, transform=ToTensor()),
+            MNIST(Xd, transform=to_tensor()),
             batch_size=self.batch_size, shuffle=True)
         optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
         best_dev_loss = np.inf
@@ -129,7 +130,7 @@ class VAE(object):
             self.model = torch.load(self.path)
         except Exception as err:
             print("Error loading '%s'\n[ERROR]: %s\nUsing initial model!" % (self.path, err))
-        test_loader = tud.DataLoader(MNIST(X, transform=ToTensor()), batch_size=self.batch_size, shuffle=False)
+        test_loader = tud.DataLoader(MNIST(X, transform=to_tensor()), batch_size=self.batch_size, shuffle=False)
         _, Z = self._evaluate(test_loader)
         return Z
 
