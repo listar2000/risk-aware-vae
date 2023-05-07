@@ -8,13 +8,12 @@ import torch.nn as nn
 
 vanilla_config = {
     "enc": [400],
-    "mu_enc": [400],
+    "mu_enc": [],
     "var_enc": [],
-    "dec": [],
+    "dec": [400],
     "enc_ac": nn.ReLU,  # enc_ac only uses the same activation
     "dec_ac": [nn.ReLU, nn.Sigmoid],  # we allow more activation here
 }
-
 
 class VNet(nn.Module):
     """

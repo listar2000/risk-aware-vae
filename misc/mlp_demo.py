@@ -12,17 +12,17 @@ import matplotlib.pyplot as plt
 class MLP(nn.Module):
     def __init__(self):
         super(MLP, self).__init__()
-        self.fc1 = nn.Linear(10, 5)
-        # self.relu1 = nn.ReLU()
-        # self.fc2 = nn.Linear(10, 10)
-        self.relu2 = nn.ReLU()
-        self.fc3 = nn.Linear(5, 5)
+        self.fc1 = nn.Linear(10, 10)
+        self.relu1 = nn.ReLU()
+        # self.fc2 = nn.Linear(20, 20)
+        # self.relu2 = nn.ReLU()
+        self.fc3 = nn.Linear(10, 5)
 
     def forward(self, x):
         x = self.fc1(x)
-        # x = self.relu1(x)
+        x = self.relu1(x)
         # x = self.fc2(x)
-        x = self.relu2(x)
+        # x = self.relu2(x)
         x = self.fc3(x)
         return x
 
@@ -89,12 +89,12 @@ if __name__ == '__main__':
     train_X = torch.randn(1000, 10)
     train_y = train_X[:, :5]
     train_dataset = tud.TensorDataset(train_X, train_y)
-    train_loader = tud.DataLoader(train_dataset, batch_size=64)
+    train_loader = tud.DataLoader(train_dataset, batch_size=128)
 
     test_X = torch.randn(200, 10)
     test_y = test_X[:, :5]
     test_dataset = tud.TensorDataset(test_X, test_y)
-    test_loader = tud.DataLoader(test_dataset, batch_size=64)
+    test_loader = tud.DataLoader(test_dataset, batch_size=128)
 
     # Initialize model, optimizer, and loss function
     model_a = MLP()
