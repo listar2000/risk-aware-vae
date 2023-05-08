@@ -2,6 +2,8 @@ import scipy.io as sio
 import numpy as np
 import torch
 import torch.utils.data as tud
+from torchvision import datasets
+from torchvision.transforms import ToTensor
 from torch.distributions.multivariate_normal import MultivariateNormal
 import os
 
@@ -84,41 +86,70 @@ class DataSet(object):
         return self._num_examples
 
 
-"""
-#    Next batch operation
-    def next_batch(self, batch_size):
-
-        # Batch size should be smaller than sample size
-        assert batch_size <= self._num_examples
-        start = self._index_in_epoch
-        self._index_in_epoch += batch_size
-
-        if self._index_in_epoch > self._num_examples:
-            # Shuffle the data
-            perm = np.arange(self._num_examples)
-            np.random.shuffle(perm)
-            self._images = self._images[perm]
-            self._labels = self._labels[perm]
-            start = 0
-            self._index_in_epoch = batch_size
-
-        end = self._index_in_epoch
-        return self._images[start:end], self._labels[start:end]
-"""
-
-
-def read_mnist(datapath):
+def read_mnist(datapath="data"):
     """
-    @datapath : path to the input data
-    Read data
+    Read MNIST data
     """
 
-    data = sio.loadmat(datapath)
-    train = DataSet(data['train'], data['trainLabel'])
-    tune = DataSet(data['tune'], data['tuneLabel'])
-    test = data['test']
+    training_data = datasets.MNIST(
+        root=datapath,
+        train=True,
+        download=True,
+        transform=ToTensor()
+    )
 
-    return train, tune, test
+    test_data = datasets.MNIST(
+        root=datapath,
+        train=False,
+        download=True,
+        transform=ToTensor()
+    )
+
+    return training_data, test_data
+
+
+def read_fashionmnist(datapath="data"):
+    """
+    Read Fashion-MNIST data
+    """
+
+    training_data = datasets.FashionMNIST(
+        root=datapath,
+        train=True,
+        download=True,
+        transform=ToTensor()
+    )
+
+    test_data = datasets.FashionMNIST(
+        root=datapath,
+        train=False,
+        download=True,
+        transform=ToTensor()
+    )
+
+    return training_data, test_data
+
+
+def read_cifar10(datapath="data"):
+    """
+    Read CIFAR10 data
+    """
+
+    training_data = datasets.CIFAR10(
+        root=datapath,
+        train=True,
+        download=True,
+        transform=ToTensor()
+    )
+
+    test_data = datasets.CIFAR10(
+        root=datapath,
+        train=False,
+        download=True,
+        transform=ToTensor()
+    )
+
+    return training_data, test_data
 
 
 class DataSet_Twoview(object):
@@ -165,27 +196,3 @@ def read_mnist_twoview(datapath):
     test2 = data['test2']
 
     return train, tune, test1, test2
-
-
-"""
-#    Next batch operation
-    def next_batch(self, batch_size):
-
-        # Batch size should be smaller than sample size
-        assert batch_size <= self._num_examples
-        start = self._index_in_epoch
-        self._index_in_epoch += batch_size
-
-        if self._index_in_epoch > self._num_examples:
-            # Shuffle the data
-            perm = np.arange(self._num_examples)
-            np.random.shuffle(perm)
-            self._images = self._images[perm]
-            self._labels = self._labels[perm]
-            start = 0
-            self._index_in_epoch = batch_size
-
-        end = self._index_in_epoch
-        return self._images[start:end], self._labels[start:end]
-
-"""
