@@ -6,7 +6,6 @@ import torch.utils.data as tud
 import numpy as np
 from torch import nn, optim
 from torch.nn import functional as F
-from dataset import read_mnist
 
 
 class MNIST(tud.Dataset):
