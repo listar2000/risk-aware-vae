@@ -5,6 +5,7 @@ from torchvision import datasets
 from torchvision.transforms import ToTensor
 from torch.distributions.multivariate_normal import MultivariateNormal
 import os
+import pickle
 
 
 class FakeDataset(tud.Dataset):
@@ -58,6 +59,42 @@ class FakeDataset(tud.Dataset):
             print(f"saving fake data into {file_path}")
 
         return ys, xss
+    
+
+class ImageNet32(tud.Dataset):
+    def __init__(self, root, train, num_batch, transform=None, target_transform=None):
+        self.images = []
+        self.img_labels = []
+        if train:
+            for batch_idx in range(1, num_batch + 1):
+                data_file = os.path.join(root, "Imagenet32", "train_data_batch_" + str(batch_idx))
+                d = unpickle(data_file)
+                self.images.append(d['data'])
+                labels = d['labels']
+                labels = [i-1 for i in labels]
+                self.img_labels += labels
+            self.images = np.concatenate(self.images)
+        else:
+            data_file = os.path.join(root, "Imagenet32", "val_data")
+            d = unpickle(data_file)
+            self.images = d['data']
+            self.img_labels = d['labels']
+        self.transform = transform
+        self.target_transform = target_transform
+
+    def __len__(self):
+        return len(self.img_labels)
+
+    def __getitem__(self, idx):
+        image = self.images[idx, :]
+        image = np.dstack((image[:1024], image[1024:2048], image[2048:]))
+        image = image.reshape((32, 32, 3))
+        label = self.img_labels[idx]
+        if self.transform:
+            image = self.transform(image)
+        if self.target_transform:
+            label = self.target_transform(label)
+        return image, label
 
 
 def read_mnist(datapath="./data"):
@@ -124,3 +161,34 @@ def read_cifar10(datapath="./data"):
     )
 
     return training_data, test_data
+
+
+def unpickle(file):
+    """
+    Helper for loading the ImageNet32 data
+    """
+    with open(file, 'rb') as fo:
+        dict = pickle.load(fo)
+    return dict
+
+
+def read_imagenet32(datapath="./data", num_batch=10):
+    """
+    Read ImageNet32 data
+    """
+
+    training_data = ImageNet32(
+        root=datapath,
+        train=True,
+        num_batch=num_batch,
+        transform=ToTensor()
+    )
+
+    validation_data = ImageNet32(
+        root=datapath,
+        train=False,
+        num_batch=num_batch,
+        transform=ToTensor()
+    )
+
+    return training_data, validation_data
