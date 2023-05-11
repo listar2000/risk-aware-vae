@@ -97,7 +97,7 @@ class ImageNet32(tud.Dataset):
         return image, label
 
 
-def read_mnist(datapath="./data"):
+def read_mnist(datapath="./data", split_fraction=[0.8, 0.2]):
     """
     Read MNIST data
     """
@@ -116,10 +116,12 @@ def read_mnist(datapath="./data"):
         transform=ToTensor()
     )
 
-    return training_data, test_data
+    training_data, validation_data = tud.random_split(training_data, split_fraction)
+
+    return training_data, validation_data, test_data
 
 
-def read_fashionmnist(datapath="./data"):
+def read_fashionmnist(datapath="./data", split_fraction=[0.8, 0.2]):
     """
     Read Fashion-MNIST data
     """
@@ -138,10 +140,12 @@ def read_fashionmnist(datapath="./data"):
         transform=ToTensor()
     )
 
-    return training_data, test_data
+    training_data, validation_data = tud.random_split(training_data, split_fraction)
+
+    return training_data, validation_data, test_data
 
 
-def read_cifar10(datapath="./data"):
+def read_cifar10(datapath="./data", split_fraction=[0.8, 0.2]):
     """
     Read CIFAR10 data
     """
@@ -160,7 +164,9 @@ def read_cifar10(datapath="./data"):
         transform=ToTensor()
     )
 
-    return training_data, test_data
+    training_data, validation_data = tud.random_split(training_data, split_fraction)
+
+    return training_data, validation_data, test_data
 
 
 def unpickle(file):
@@ -172,7 +178,7 @@ def unpickle(file):
     return dict
 
 
-def read_imagenet32(datapath="./data", num_batch=10):
+def read_imagenet32(datapath="./data", num_batch=10, split_fraction=[0.8, 0.2]):
     """
     Read ImageNet32 data
     """
@@ -184,11 +190,15 @@ def read_imagenet32(datapath="./data", num_batch=10):
         transform=ToTensor()
     )
 
-    validation_data = ImageNet32(
+    # treating the ImageNet32 official validation set as test set, creating
+    # validation set from training set instead
+    test_data = ImageNet32(
         root=datapath,
         train=False,
         num_batch=num_batch,
         transform=ToTensor()
     )
 
-    return training_data, validation_data
+    training_data, validation_data = tud.random_split(training_data, split_fraction)
+
+    return training_data, validation_data, test_data

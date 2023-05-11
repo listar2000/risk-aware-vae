@@ -1,5 +1,7 @@
 .idea
 data/*
+Deep VAE/*
 __pycache__/*
 .ipynb_checkpoints/*
 checkpoints/*
+Project Proposal 4.26.pdf
