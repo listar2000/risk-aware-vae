@@ -12,6 +12,7 @@ import numpy as np
 import datetime
 from tqdm import tqdm
 
+
 vanilla_config = {
     "enc": [400],
     "mu_enc": [],
@@ -20,6 +21,17 @@ vanilla_config = {
     "enc_ac": nn.ReLU,  # enc_ac only uses the same activation
     "dec_ac": nn.ReLU,  # we allow more activation here
     "final_ac": nn.Sigmoid,  # activation on the final level
+}
+
+# credit: https://github.com/lyeoni/pytorch-mnist-VAE
+two_layer_config = {
+    "enc": [512, 256],
+    "mu_enc": [],
+    "var_enc": [],
+    "dec": [256, 512],
+    "enc_ac": torch.nn.ReLU,  # enc_ac only uses the same activation
+    "dec_ac": torch.nn.ReLU,  # we allow more activation here
+    "final_ac": torch.nn.Sigmoid,  # activation on the final level
 }
 
 

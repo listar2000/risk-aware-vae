@@ -4,4 +4,5 @@ Deep VAE/*
 __pycache__/*
 .ipynb_checkpoints/*
 checkpoints/*
-Project Proposal 4.26.pdf
+reports/*
+legacy/.ipynb_checkpoints/*
