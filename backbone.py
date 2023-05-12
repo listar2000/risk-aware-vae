@@ -209,6 +209,7 @@ class VAE(object):
         """
         n, d = mu.shape
         recon_loss = self.recon_loss_f(recon_x, x, reduction="none")
+        recon_loss = recon_loss.sum(1) # 1 x batch_size
         # apply risk-awareness changes
         if self.risk_aware == 'seeking':
             q = torch.quantile(recon_loss, self.risk_q)
@@ -216,7 +217,7 @@ class VAE(object):
         elif self.risk_aware == 'abiding':
             q = torch.quantile(recon_loss, 1.0 - self.risk_q)
             recon_loss = recon_loss[recon_loss > q]
-
+            
         recon_loss = recon_loss.sum() / recon_loss.size(0)
         kld = -0.5 * (d + self.kv * (log_var - log_var.exp()).sum() / n - mu.pow(2).sum() / n)
         loss = recon_loss + self.kkl * kld
