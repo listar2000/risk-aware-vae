@@ -9,9 +9,8 @@ import torch.optim as optim
 import torch.utils.data as tud
 import torch.nn.functional as F
 import numpy as np
-import datetime
+import datetime, os
 from tqdm import tqdm
-
 
 vanilla_config = {
     "enc": [400],
@@ -116,7 +115,7 @@ class VAE(object):
 
     def __init__(self, n_inputs, n_components, config, lr=1.0e-3, batch_size=64,
                  device=None, folder_path="./checkpoints", save_model=False, kkl=1.0, kv=1.0,
-                 recon_loss_f="bce", risk_aware='neutral', risk_q=0.5):
+                 recon_loss_f="bce", risk_aware='neutral', risk_q=0.5, ema_alpha=0.9):
         self.model = VNet(n_inputs, n_components, config=config)
         self.device = device or torch.device("cpu")
         self.model.to(self.device)
@@ -132,6 +131,9 @@ class VAE(object):
         assert risk_aware in ['neutral', 'seeking', 'abiding']
         self.risk_aware = risk_aware
         self.risk_q = risk_q
+        # exponential moving average for quantile
+        self.ema_quantile = None
+        self.ema_alpha = ema_alpha  # feel free to adjust this value
         # initialize weights
         self.initialize()
 
@@ -144,8 +146,9 @@ class VAE(object):
         develop_data: 2d array of shape (n_data, n_dim). Dev data, used for early stopping
         epochs: int, number of training epochs
         """
-        train_loader = tud.DataLoader(train_data, batch_size=self.batch_size, shuffle=True)
-        dev_loader = tud.DataLoader(dev_data, batch_size=self.batch_size, shuffle=True)
+        num_workers = min(4, os.cpu_count())
+        train_loader = tud.DataLoader(train_data, batch_size=self.batch_size, shuffle=True, num_workers=num_workers)
+        dev_loader = tud.DataLoader(dev_data, batch_size=self.batch_size, shuffle=True, num_workers=num_workers)
 
         optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
         best_dev_loss = np.inf
@@ -221,16 +224,24 @@ class VAE(object):
         """
         n, d = mu.shape
         recon_loss = self.recon_loss_f(recon_x, x, reduction="none")
-        recon_loss = recon_loss.sum(1) # 1 x batch_size
-        # apply risk-awareness changes
-        if self.risk_aware == 'seeking':
-            q = torch.quantile(recon_loss, self.risk_q)
-            recon_loss = recon_loss[recon_loss < q]
-        elif self.risk_aware == 'abiding':
-            q = torch.quantile(recon_loss, 1.0 - self.risk_q)
-            recon_loss = recon_loss[recon_loss > q]
-            
-        recon_loss = recon_loss.sum() / recon_loss.size(0)
+        recon_loss = recon_loss.sum(1)  # 1 x batch_size
+        # compute the current batch quantile
+        if self.risk_aware in ['seeking', 'abiding']:
+            current_q = torch.quantile(recon_loss, self.risk_q if self.risk_aware == 'seeking' else 1.0 - self.risk_q)
+            if self.ema_quantile is None:
+                self.ema_quantile = current_q.detach()  # initialize EMA quantile
+            else:
+                # update the EMA quantile
+                self.ema_quantile = self.ema_alpha * current_q.detach() + (1 - self.ema_alpha) * self.ema_quantile
+            filtered_recon_loss = recon_loss[recon_loss < self.ema_quantile] if self.risk_aware == 'seeking' else \
+                recon_loss[recon_loss > self.ema_quantile]
+            # if the filtered loss tensor is empty, use the original one
+            if filtered_recon_loss.nelement() == 0:
+                recon_loss = recon_loss.sum() / n
+            else:
+                recon_loss = filtered_recon_loss.sum() / filtered_recon_loss.size(0)
+        else:
+            recon_loss = recon_loss.sum() / n
         kld = -0.5 * (d + self.kv * (log_var - log_var.exp()).sum() / n - mu.pow(2).sum() / n)
         loss = recon_loss + self.kkl * kld
         return loss
@@ -247,6 +258,7 @@ class VAE(object):
         """
         Model Initialization
         """
+
         def _init_weights(m):
             if type(m) == nn.Linear:
                 nn.init.xavier_uniform_(m.weight)
