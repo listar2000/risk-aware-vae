@@ -1,5 +1,9 @@
 import matplotlib.pyplot as plt
 import torch
+import numpy as np
+from torchvision.utils import make_grid
+from torchmetrics.image.inception import InceptionScore
+from torchmetrics.image.fid import FrechetInceptionDistance
 
 
 def visualize_dataset_in_grid(images: torch.Tensor, labels: torch.Tensor = None,
@@ -29,3 +33,68 @@ def visualize_dataset_in_grid(images: torch.Tensor, labels: torch.Tensor = None,
 
     # Show the plot
     plt.show()
+
+
+def matplotlib_imshow(img, one_channel=False):
+    if one_channel:
+        img = img.mean(dim=0)
+    npimg = img.numpy()
+    if one_channel:
+        plt.imshow(npimg, cmap="gray")
+    else:
+        plt.imshow(np.transpose(npimg, (1, 2, 0)))
+
+
+def grid_show(imgs):
+    """
+    Display images (B x C x W x H) on a grid
+    """
+
+    img_grid = make_grid(imgs)
+    matplotlib_imshow(img_grid, one_channel=True)
+
+
+def generate_img(model, z_dim):
+    """
+    Generate a random sample of images from a VAE model
+    """
+
+    with torch.no_grad():
+        z = torch.randn(model.batch_size, z_dim).cuda()
+        sample = model.model.decode(z)
+    return sample
+
+
+def reconstruct_img(model, x):
+    """
+    Reconstruct a image by doing one forward pass of a VAE model
+    """ 
+
+    with torch.no_grad():
+        sample, _, _ = model.model(x.cuda())
+    return sample
+
+
+def compute_IS(sample):
+    """
+    Compute the Inception Score for a batch of generated samples
+    """
+
+    # Only compatible with MNIST for now
+    inception = InceptionScore(normalize=True)
+    inception.update(sample.repeat(1, 3, 1, 1))
+    return inception.compute()
+
+
+def compute_FID(train, sample):
+    """
+    Compute the Frechet Inception Distance for a batch of reconstructed samples
+    """
+
+    # Only compatible with MNIST for now
+    fid = FrechetInceptionDistance(feature=64, normalize=True)
+    img_dist1 = train.repeat(1, 3, 1, 1)
+    img_dist2 = sample.repeat(1, 3, 1, 1)
+    fid.update(img_dist1, real=True)
+    fid.update(img_dist2, real=False)
+    return fid.compute()
