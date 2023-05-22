@@ -93,6 +93,45 @@ def show_recon_img(model, x, device):
     grid_show(imgs)
 
 
+def generated_embedding(model, z_dim, device, loader):
+    """
+    Extract embedding from data in a dataloader. Additionally generate batches 
+    of images and extract their embedings by passing it through the encoder one 
+    more time.
+    """
+
+    list_samples = []
+    list_mu_real = []
+    list_mu_gen = []
+    with torch.no_grad():
+        for data in tqdm(loader):
+            data = data[0].to(device)
+            data = data.view(data.size(0), -1)
+            mu_real = model.model.encode(data)[0]
+            list_mu_real.append(mu_real)
+            gen_img = generate_img(model, z_dim, device)
+            gen_img = gen_img.view(gen_img.shape[0], -1).to(device)
+            mu_gen = model.model.encode(gen_img)[0]
+            list_mu_gen.append(mu_gen)
+            list_samples.append(gen_img)
+    return (list_samples, list_mu_real, list_mu_gen)
+
+
+def dist(list_mu_a, list_mu_b):
+    """
+    Compute pairwise distances in feature space.
+    """
+    
+    list_Mxx = []
+    list_Mxy = []
+    list_Myy = []
+    for mu_a, mu_b in zip(list_mu_a, list_mu_b):
+        list_Mxx.append(torch.cdist(mu_a, mu_a).cpu())
+        list_Mxy.append(torch.cdist(mu_a, mu_b).cpu())
+        list_Myy.append(torch.cdist(mu_b, mu_b).cpu())
+    return (list_Mxx, list_Mxy, list_Myy)
+
+
 def knn(Mxx, Mxy, Myy, k=1, sqrt=True):
     """
     The leave-one-out accuracy of a 1-NN classifier.
@@ -124,7 +163,15 @@ def knn(Mxx, Mxy, Myy, k=1, sqrt=True):
     return acc, precision, recall
 
 
-def mmd(Mxx, Mxy, Myy, sigma = 1):
+def knn_by_batch(list_mu_a, list_mu_b):
+    list_Mxx, list_Mxy, list_Myy = dist(list_mu_a, list_mu_b)
+    list_acc = []
+    for Mxx, Mxy, Myy in zip(list_Mxx, list_Mxy, list_Myy):
+        list_acc.append(knn(Mxx, Mxy, Myy)[0])
+    return list_acc
+
+
+def mmd(Mxx, Mxy, Myy, sigma=1):
     """
     Kernel Maximum Mean Discrepancy (Gaussian kernel).
     Input: L2 distances in some feature space (important: not pixel space)
@@ -139,6 +186,21 @@ def mmd(Mxx, Mxy, Myy, sigma = 1):
     mmd = max(a, 0) ** (0.5)
 
     return mmd
+
+
+def mmd_by_batch(list_mu_a, list_mu_b):
+    list_Mxx, list_Mxy, list_Myy = dist(list_mu_a, list_mu_b)
+    list_mmd = []
+    for Mxx, Mxy, Myy in zip(list_Mxx, list_Mxy, list_Myy):
+        list_mmd.append(mmd(Mxx, Mxy, Myy))
+    return list_mmd
+
+
+def plot_metric_best_batch(samples, list_metric):
+    best_batch = samples[np.argmin(list_metric)]
+    best_batch = best_batch.view(64, 1, 28, 28).cpu()
+    grid_show(best_batch)
+    plt.show()
 
 
 def IS(sample):
@@ -205,20 +267,19 @@ def reorder(list_recon_loss, by):
         return [loss.mean().item() for loss in list_recon_loss]
 
 
-
-def plot_recon_loss(recon_loss_a, recon_loss_b):
+def plot_metric(metric_a, metric_b, metric):
     """
     Plot reconstruction loss as histograms
     """
     
-    loss_a_min = np.min(recon_loss_a)
-    loss_a_max = np.max(recon_loss_a)
-    loss_b_min = np.min(recon_loss_b)
-    loss_b_max = np.max(recon_loss_b)
-    print(f"Model A: Loss minimum: {loss_a_min}, Loss maximum: {loss_a_max}")
-    print(f"Model B: Loss minimum: {loss_b_min}, Loss maximum: {loss_b_max}")
-    plt.hist(recon_loss_a, density=True, histtype='step')
-    plt.hist(recon_loss_b, density=True, histtype='step')
+    a_min = np.min(metric_a)
+    a_max = np.max(metric_a)
+    b_min = np.min(metric_b)
+    b_max = np.max(metric_b)
+    print(f"Model A: {metric} minimum: {a_min}, {metric} maximum: {a_max}")
+    print(f"Model B: {metric} minimum: {b_min}, {metric} maximum: {b_max}")
+    plt.hist(metric_a, density=True, histtype='step')
+    plt.hist(metric_b, density=True, histtype='step')
     plt.show()
             
 
@@ -272,18 +333,3 @@ def t_test(recon_loss_a, recon_loss_b):
     conclusion = f"difference, t-statistics: {t}, p-value: {p}"
     conclusion = "Significant " + conclusion if p < 0.05 else "No significant " + conclusion
     print(conclusion)
-
-
-def plot_best_images(samples, loss, n=3):
-    best_images_idx = np.argsort(loss)[:n]
-    for idx in best_images_idx:
-        print("Reconstruction loss:", loss[idx])
-        q, mod = divmod(idx, 6400)
-        row_idx, col_idx = divmod(mod, 100)
-        best_batch_in, best_batch_out = samples[q]
-        best_in = best_batch_in[row_idx]
-        best_out = best_batch_out[row_idx, col_idx]
-        best_in = best_in.view(1, 1, 28, 28).cpu()
-        best_out = best_out.view(1, 1, 28, 28).cpu()
-        grid_show(torch.cat((best_in, best_out), 3))
-        plt.show()
