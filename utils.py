@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import torch
 from torch.utils.data import DataLoader
+from torchmetrics.image import FrechetInceptionDistance, InceptionScore
 from torchvision.utils import make_grid
 from backbone import VAE, two_layer_config
 from dataset import read_mnist
@@ -81,7 +82,56 @@ def train_mnist(z_dim, config, device, risk_aware, epochs=10, risk_q=0.5, show_c
         plt.show()
     return model
 
+def grid_show(imgs):
+    """
+    Display images (B x C x W x H) on a grid
+    """
 
-if __name__ == "__main__":
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    vae_model = train_mnist(20, two_layer_config, device, risk_aware="neutral", plot=False)
+    img_grid = make_grid(imgs)
+    matplotlib_imshow(img_grid, one_channel=True)
+
+
+def generate_img(model, z_dim):
+    """
+    Generate a random sample of images from a VAE model
+    """
+
+    with torch.no_grad():
+        z = torch.randn(model.batch_size, z_dim).cuda()
+        sample = model.model.decode(z)
+    return sample
+
+
+def reconstruct_img(model, x):
+    """
+    Reconstruct a image by doing one forward pass of a VAE model
+    """ 
+
+    with torch.no_grad():
+        sample, _, _ = model.model(x.cuda())
+    return sample
+
+
+def compute_IS(sample):
+    """
+    Compute the Inception Score for a batch of generated samples
+    """
+
+    # Only compatible with MNIST for now
+    inception = InceptionScore(normalize=True)
+    inception.update(sample.repeat(1, 3, 1, 1))
+    return inception.compute()
+
+
+def compute_FID(train, sample):
+    """
+    Compute the Frechet Inception Distance for a batch of reconstructed samples
+    """
+
+    # Only compatible with MNIST for now
+    fid = FrechetInceptionDistance(feature=64, normalize=True)
+    img_dist1 = train.repeat(1, 3, 1, 1)
+    img_dist2 = sample.repeat(1, 3, 1, 1)
+    fid.update(img_dist1, real=True)
+    fid.update(img_dist2, real=False)
+    return fid.compute()
