@@ -60,36 +60,36 @@ def grid_show(imgs):
     matplotlib_imshow(img_grid, one_channel=True)
 
 
-def generate_img(model, z_dim):
+def generate_img(model, z_dim, device):
     """
     Generate a random sample of images from a VAE model
     """
 
     with torch.no_grad():
-        z = torch.randn(model.batch_size, z_dim).cuda()
+        z = torch.randn(model.batch_size, z_dim).unsqueeze(-1).to(device)
         sample = model.model.decode(z)
-    return sample
+    return sample.cpu()
 
 
-def reconstruct_img(model, x):
+def reconstruct_img(model, x, device):
     """
     Reconstruct a image by doing one forward pass of a VAE model
     """ 
 
     with torch.no_grad():
-        sample, _, _ = model.model(x.cuda())
-    return sample
+        sample, _, _ = model.model(x.to(device))
+    return sample.cpu()
 
 
-def show_gen_img(model, z_dim):
-    sample = generate_img(model, z_dim)
-    sample = sample.view(model.batch_size, 1, 28, 28).cpu()
+def show_gen_img(model, z_dim, device):
+    sample = generate_img(model, z_dim, device)
+    sample = sample.view(model.batch_size, 1, 28, 28)
     grid_show(sample)
 
 
-def show_recon_img(model, x):
-    sample = reconstruct_img(model, x)
-    imgs = torch.cat((x.view(1, 1, 28, 28).cpu(), sample.view(1, 1, 28, 28).cpu()))
+def show_recon_img(model, x, device):
+    sample = reconstruct_img(model, x, device)
+    imgs = torch.cat((x.view(1, 1, 28, 28).cpu(), sample.view(1, 1, 28, 28)))
     grid_show(imgs)
 
 
@@ -170,7 +170,7 @@ def FID(train, sample):
     return fid.compute()
 
 
-def compute_recon_loss(model, val_dataloader):
+def compute_recon_loss(model, val_dataloader, device):
     """
     Given a validation set, get all reconstructed samples and associated losses
     """
@@ -179,12 +179,12 @@ def compute_recon_loss(model, val_dataloader):
     list_recon_samples = []
     for val_features, _ in tqdm(val_dataloader):
         b = val_features.shape[0]
-        val_samples = val_features.view(b, -1).cuda()
-        recon_samples = reconstruct_img(model, val_samples)
+        val_samples = val_features.view(b, -1)
+        recon_samples = reconstruct_img(model, val_samples, device)
         list_recon_samples.append((val_samples, recon_samples))
-        # loss dimension: batch size x (W x H)
-        recon_loss = model.recon_loss_f(recon_samples, val_samples, reduction="none")
-        list_recon_loss.append(recon_loss)
+        val_samples_expand = val_samples.unsqueeze(1).expand_as(recon_samples)
+        recon_loss = model.recon_loss_f(recon_samples.to(device), val_samples_expand.to(device), reduction="none")
+        list_recon_loss.append(recon_loss.sum(-1).cpu())
 
     return (list_recon_samples, list_recon_loss)
 
@@ -195,11 +195,15 @@ def reorder(list_recon_loss, by):
     """
     
     if by == "image":
-        return [img_loss.cpu() for loss in list_recon_loss for img_loss in loss.sum(1)]
+        # loss by sub-sample
+        return torch.vstack(list_recon_loss).flatten().tolist()
     elif by == "image_nested":
-        return [loss.sum(1).cpu() for loss in list_recon_loss]
+        # loss by sub-sample, organized in batches
+        return [loss.flatten().tolist() for loss in list_recon_loss]
     elif by == "batch":
-        return [loss.sum(1).mean().cpu() for loss in list_recon_loss]
+        # loss by batch average
+        return [loss.mean().item() for loss in list_recon_loss]
+
 
 
 def plot_recon_loss(recon_loss_a, recon_loss_b):
@@ -207,8 +211,14 @@ def plot_recon_loss(recon_loss_a, recon_loss_b):
     Plot reconstruction loss as histograms
     """
     
-    plt.hist(recon_loss_a, density=True)
-    plt.hist(recon_loss_b, density=True)
+    loss_a_min = np.min(recon_loss_a)
+    loss_a_max = np.max(recon_loss_a)
+    loss_b_min = np.min(recon_loss_b)
+    loss_b_max = np.max(recon_loss_b)
+    print(f"Model A: Loss minimum: {loss_a_min}, Loss maximum: {loss_a_max}")
+    print(f"Model B: Loss minimum: {loss_b_min}, Loss maximum: {loss_b_max}")
+    plt.hist(recon_loss_a, density=True, histtype='step')
+    plt.hist(recon_loss_b, density=True, histtype='step')
     plt.show()
             
 
@@ -219,25 +229,60 @@ def best_batch(samples, loss_by_batch, loss_by_image_nested):
 
 
 def plot_best_batch(best_batch):
+    """
+    From the best batch, plot a randomly chosen batch.
+    """
+    
     best_batch_in, best_batch_out = best_batch
+    random_idx = torch.randint(best_batch_out.shape[1] - 1, (1,))
+    best_batch_out = best_batch_out[:, random_idx, :]
     best_batch_in = best_batch_in.view(64, 1, 28, 28).cpu()
     best_batch_out = best_batch_out.view(64, 1, 28, 28).cpu()
     grid_show(torch.cat((best_batch_in, best_batch_out), 3))
     plt.show()
 
 
-def batch_t_test(recon_loss_a, recon_loss_b):
-    return stats.ttest_ind(recon_loss_a, recon_loss_b)
+def best_images(samples, loss, n=10):
+    best_images_idx = np.argsort(loss)[:n]
+    best_loss = [loss[idx] for idx in best_images_idx]
+    best_images = []
+    for idx in best_images_idx:
+        print("Reconstruction loss:", loss[idx])
+        q, mod = divmod(idx, 6400)
+        row_idx, col_idx = divmod(mod, 100)
+        best_batch_in, best_batch_out = samples[q]
+        best_in = best_batch_in[row_idx]
+        best_out = best_batch_out[row_idx, col_idx]
+        best_images.append((best_in, best_out))
+
+    return (best_images, best_loss)
+
+
+def plot_best_images(best_images, n=3):
+    for i in range(n):
+        best_in, best_out = best_images[i]
+        best_in = best_in.view(1, 1, 28, 28).cpu()
+        best_out = best_out.view(1, 1, 28, 28).cpu()
+        grid_show(torch.cat((best_in, best_out), 3))
+        plt.show()
+
+
+def t_test(recon_loss_a, recon_loss_b):
+    t, p = stats.ttest_ind(recon_loss_a, recon_loss_b)
+    conclusion = f"difference, t-statistics: {t}, p-value: {p}"
+    conclusion = "Significant " + conclusion if p < 0.05 else "No significant " + conclusion
+    print(conclusion)
 
 
 def plot_best_images(samples, loss, n=3):
     best_images_idx = np.argsort(loss)[:n]
     for idx in best_images_idx:
-        print("Reconstruction loss:", loss[idx].item())
-        q, mod = divmod(idx, 64)
+        print("Reconstruction loss:", loss[idx])
+        q, mod = divmod(idx, 6400)
+        row_idx, col_idx = divmod(mod, 100)
         best_batch_in, best_batch_out = samples[q]
-        best_in = best_batch_in[mod]
-        best_out = best_batch_out[mod]
+        best_in = best_batch_in[row_idx]
+        best_out = best_batch_out[row_idx, col_idx]
         best_in = best_in.view(1, 1, 28, 28).cpu()
         best_out = best_out.view(1, 1, 28, 28).cpu()
         grid_show(torch.cat((best_in, best_out), 3))

@@ -12,27 +12,6 @@ import numpy as np
 import datetime, os
 from tqdm import tqdm
 
-vanilla_config = {
-    "enc": [400],
-    "mu_enc": [],
-    "var_enc": [],
-    "dec": [400],
-    "enc_ac": nn.ReLU,  # enc_ac only uses the same activation
-    "dec_ac": nn.ReLU,  # we allow more activation here
-    "final_ac": nn.Sigmoid,  # activation on the final level
-}
-
-# credit: https://github.com/lyeoni/pytorch-mnist-VAE
-two_layer_config = {
-    "enc": [512, 256],
-    "mu_enc": [],
-    "var_enc": [],
-    "dec": [256, 512],
-    "enc_ac": torch.nn.ReLU,  # enc_ac only uses the same activation
-    "dec_ac": torch.nn.ReLU,  # we allow more activation here
-    "final_ac": torch.nn.Sigmoid,  # activation on the final level
-}
-
 
 class VNet(nn.Module):
     """
@@ -45,8 +24,9 @@ class VNet(nn.Module):
     subsample: int, how many sub samples to draw for one data point
     """
 
-    def __init__(self, dx, dh, subsample=1, config: dict = None):
+    def __init__(self, dx, dh, device, subsample=1, config: dict = None):
         super(VNet, self).__init__()
+        self.device = device or torch.device("cpu")
         self.subsample = subsample
         if config is None:
             config = vanilla_config
@@ -88,7 +68,7 @@ class VNet(nn.Module):
 
     def reparameterize(self, mu, log_var, subsample):
         std = torch.exp(0.5 * log_var)
-        eps = torch.randn(*std.shape, subsample)
+        eps = torch.randn(*std.shape, subsample, device=self.device)
         return eps.mul(std.unsqueeze(-1)).add_(mu.unsqueeze(-1))
 
     def decode(self, z):
@@ -137,7 +117,7 @@ class VAE(object):
                  device=None, folder_path="./checkpoints", save_model=False, kkl=1.0, kv=1.0,
                  recon_loss_f="bce", risk_aware='neutral', risk_q=0.5, ema_alpha=0.9):
         self.subsample = subsample
-        self.model = VNet(n_inputs, n_components, config=config, subsample=subsample)
+        self.model = VNet(n_inputs, n_components, device, subsample=subsample, config=config)
         self.device = device or torch.device("cpu")
         self.model.to(self.device)
         self.batch_size = batch_size

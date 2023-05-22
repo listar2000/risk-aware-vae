@@ -1,11 +1,49 @@
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 from dataset import read_mnist
-from backbone import VAE, two_layer_config
+from backbone import VAE
 from utils import show_gen_img, show_recon_img
 import matplotlib.pyplot as plt
 
 
+vanilla_config = {
+    "enc": [400],
+    "mu_enc": [],
+    "var_enc": [],
+    "dec": [400],
+    "enc_ac": nn.ReLU,  # enc_ac only uses the same activation
+    "dec_ac": nn.ReLU,  # we allow more activation here
+    "final_ac": nn.Sigmoid,  # activation on the final level
+}
+
+# credit: https://github.com/lyeoni/pytorch-mnist-VAE
+two_layer_config = {
+    "enc": [512, 256],
+    "mu_enc": [],
+    "var_enc": [],
+    "dec": [256, 512],
+    "enc_ac": torch.nn.ReLU,  # enc_ac only uses the same activation
+    "dec_ac": torch.nn.ReLU,  # we allow more activation here
+    "final_ac": torch.nn.Sigmoid,  # activation on the final level
+}
+
+
+def train_VAE(model_config, train, val, verbose=False):
+    img_size = model_config["img_size"]
+    latent_dim = model_config["latent_dim"]
+    layer_config = model_config["layer_config"]
+    subsample = model_config["subsample"]
+    device = model_config["device"]
+    risk_aware = model_config["risk_aware"]
+    epochs = model_config["epochs"]
+    model = VAE(img_size, latent_dim, layer_config, subsample=subsample, device=device, risk_aware=risk_aware)
+    if verbose:
+        print(model.model)
+    model.fit(train, val, epochs=epochs)
+    return model
+    
+    
 def train_mnist(z_dim, config, device, risk_aware, epochs=10, risk_q=0.5, show_config=True, plot=True):
     mnist_train, mnist_val, mnist_test = read_mnist()
     train_dataloader = DataLoader(mnist_train, batch_size=64, shuffle=True)
