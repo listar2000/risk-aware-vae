@@ -42,10 +42,12 @@ class VNet(nn.Module):
     ----------
     dx: int, input dimension
     dh: int, latent dimension
+    subsample: int, how many sub samples to draw for one data point
     """
 
-    def __init__(self, dx, dh, config: dict = None):
+    def __init__(self, dx, dh, subsample=1, config: dict = None):
         super(VNet, self).__init__()
+        self.subsample = subsample
         if config is None:
             config = vanilla_config
         # construct encoders
@@ -84,18 +86,36 @@ class VNet(nn.Module):
         h = self.enc(x)
         return self.mu_enc(h), self.var_enc(h)
 
-    def reparameterize(self, mu, log_var):
+    def reparameterize(self, mu, log_var, subsample):
         std = torch.exp(0.5 * log_var)
-        eps = torch.randn_like(std)
-        return eps.mul(std).add_(mu)
+        eps = torch.randn(*std.shape, subsample)
+        return eps.mul(std.unsqueeze(-1)).add_(mu.unsqueeze(-1))
 
     def decode(self, z):
-        return self.dec(z)
+        # Reshape from (batch_size, latent_dim, subsample) to (batch_size * subsample, latent_dim)
+        batch_size, latent_dim, subsample = z.size()
+        z_reshape = z.permute(0, 2, 1).contiguous().view(-1, latent_dim)
+
+        # Decode each "data point"
+        x_hat = self.dec(z_reshape)
+
+        # Reshape back to (batch_size, subsample, input_dim)
+        input_dim = x_hat.size(-1)
+        x_hat = x_hat.view(batch_size, subsample, input_dim)
+        return x_hat
 
     def forward(self, x):
         mu, log_var = self.encode(x)
-        z = self.reparameterize(mu, log_var)
-        return self.decode(z), mu, log_var
+        z = self.reparameterize(mu, log_var, self.subsample)
+        x_hat = self.decode(z)
+        return x_hat, mu, log_var
+
+    def evaluate(self, x):
+        with torch.no_grad():
+            mu, log_var = self.encode(x)
+            z = self.reparameterize(mu, log_var, 1)
+            x_hat = self.decode(z)
+            return x_hat, mu, log_var
 
 
 class VAE(object):
@@ -113,10 +133,11 @@ class VAE(object):
     kv: float, weight on variance term inside -KL(q(z|x)||p(z)) (default: 1.0)
     """
 
-    def __init__(self, n_inputs, n_components, config, lr=1.0e-3, batch_size=64,
+    def __init__(self, n_inputs, n_components, config, lr=1.0e-3, batch_size=64, subsample=1,
                  device=None, folder_path="./checkpoints", save_model=False, kkl=1.0, kv=1.0,
                  recon_loss_f="bce", risk_aware='neutral', risk_q=0.5, ema_alpha=0.9):
-        self.model = VNet(n_inputs, n_components, config=config)
+        self.subsample = subsample
+        self.model = VNet(n_inputs, n_components, config=config, subsample=subsample)
         self.device = device or torch.device("cpu")
         self.model.to(self.device)
         self.batch_size = batch_size
@@ -203,7 +224,7 @@ class VAE(object):
             for batch_idx, data in enumerate(loader):
                 data = data[0].to(self.device)
                 data = data.view(data.size(0), -1)
-                recon_batch, mu, log_var = self.model(data)
+                recon_batch, mu, log_var = self.model.evaluate(data)
                 loss += self._loss_function(recon_batch, data, mu, log_var).item()
                 fs.append(mu)
         fs = torch.cat(fs).cpu().numpy()
@@ -223,27 +244,34 @@ class VAE(object):
         loss: 1d tensor, VAE loss
         """
         n, d = mu.shape
-        recon_loss = self.recon_loss_f(recon_x, x, reduction="none")
-        recon_loss = recon_loss.sum(1)  # 1 x batch_size
+        x_expand = x.unsqueeze(1).expand_as(recon_x)
+        recon_loss = self.recon_loss_f(recon_x, x_expand, reduction="none")
+        recon_loss = recon_loss.sum(-1)
         # compute the current batch quantile
         if self.risk_aware in ['seeking', 'abiding']:
-            current_q = torch.quantile(recon_loss, self.risk_q if self.risk_aware == 'seeking' else 1.0 - self.risk_q)
+            current_q = torch.quantile(recon_loss,
+                                       self.risk_q if self.risk_aware == 'seeking' else 1.0 - self.risk_q, dim=-1)
             if self.ema_quantile is None:
-                self.ema_quantile = current_q.detach()  # initialize EMA quantile
-            else:
-                # update the EMA quantile
-                self.ema_quantile = self.ema_alpha * current_q.detach() + (1 - self.ema_alpha) * self.ema_quantile
-            filtered_recon_loss = recon_loss[recon_loss < self.ema_quantile] if self.risk_aware == 'seeking' else \
-                recon_loss[recon_loss > self.ema_quantile]
-            # if the filtered loss tensor is empty, use the original one
-            if filtered_recon_loss.nelement() == 0:
-                recon_loss = recon_loss.sum() / n
-            else:
-                recon_loss = filtered_recon_loss.sum() / filtered_recon_loss.size(0)
+                self.ema_quantile = current_q.detach().mean()  # initialize EMA quantile
+
+            # update the EMA quantile
+            self.ema_quantile = self.ema_alpha * current_q.detach() + (1 - self.ema_alpha) * self.ema_quantile
+            q_expanded = self.ema_quantile.unsqueeze(-1).expand_as(recon_loss)
+            q_mask = recon_loss < q_expanded if self.risk_aware == 'seeking' else recon_loss > q_expanded
+            # Calculate the filtered reconstruction loss
+            filtered_recon_loss = recon_loss * q_mask
+            final_recon_loss = filtered_recon_loss.sum(1) / (q_mask.sum(1) + 1e-8)
+
+            non_zero_mask = q_mask.sum(1) > 0
+
+            final_recon_loss = final_recon_loss[non_zero_mask].mean()
+            self.ema_quantile = self.ema_quantile.mean()
         else:
-            recon_loss = recon_loss.sum() / n
+            final_recon_loss = recon_loss.mean()
         kld = -0.5 * (d + self.kv * (log_var - log_var.exp()).sum() / n - mu.pow(2).sum() / n)
-        loss = recon_loss + self.kkl * kld
+        # print(final_recon_loss, kld)
+        # print(final_recon_loss / kld)
+        loss = final_recon_loss + self.kkl * kld
         return loss
 
     def _save_model(self):
