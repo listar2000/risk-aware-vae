@@ -1,6 +1,5 @@
 .idea
 data/*
-Deep VAE/*
 __pycache__/*
 .ipynb_checkpoints/*
 checkpoints/*

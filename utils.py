@@ -1,10 +1,15 @@
+"""
+Code for visualization, metric computation and model evaluation.
+"""
+
 import matplotlib.pyplot as plt
 import torch
-from torch.utils.data import DataLoader
-from torchmetrics.image import FrechetInceptionDistance, InceptionScore
+import numpy as np
 from torchvision.utils import make_grid
-from backbone import VAE, two_layer_config
-from dataset import read_mnist
+from torchmetrics.image.inception import InceptionScore
+from torchmetrics.image.fid import FrechetInceptionDistance
+from tqdm import tqdm
+from scipy import stats
 
 
 def visualize_dataset_in_grid(images: torch.Tensor, labels: torch.Tensor = None,
@@ -37,7 +42,6 @@ def visualize_dataset_in_grid(images: torch.Tensor, labels: torch.Tensor = None,
 
 
 def matplotlib_imshow(img, one_channel=False):
-    import numpy as np
     if one_channel:
         img = img.mean(dim=0)
     npimg = img.numpy()
@@ -46,41 +50,6 @@ def matplotlib_imshow(img, one_channel=False):
     else:
         plt.imshow(np.transpose(npimg, (1, 2, 0)))
 
-
-def generate_img(model, z_dim, device):
-    with torch.no_grad():
-        z = torch.randn(64, z_dim).unsqueeze(-1).to(device)
-        sample = model.model.decode(z)
-    img_grid = make_grid(sample.view(64, 1, 28, 28).cpu())
-    matplotlib_imshow(img_grid, one_channel=True)
-
-
-def reconstruct_img(model, x, device):
-    with torch.no_grad():
-        sample, _, _ = model.model.evaluate(x.reshape(1, -1).to(device))
-
-    imgs = torch.cat((x.view(1, 1, 28, 28).cpu(), sample.view(1, 1, 28, 28).cpu()))
-    img_grid = make_grid(imgs)
-    matplotlib_imshow(img_grid, one_channel=True)
-    plt.show()
-
-
-def train_mnist(z_dim, config, device, risk_aware, epochs=10, risk_q=0.5, show_config=True, plot=True):
-    mnist_train, mnist_val, mnist_test = read_mnist()
-    train_dataloader = DataLoader(mnist_train, batch_size=64, shuffle=True)
-    train_features, train_labels = next(iter(train_dataloader))
-
-    model = VAE(28 * 28, z_dim, config, device=device, risk_aware=risk_aware, risk_q=risk_q)
-    if show_config:
-        print(model.model)
-    model.fit(mnist_train, mnist_val, epochs=epochs)
-    if plot:
-        plt.subplot(1, 2, 1)
-        generate_img(model, z_dim, device)
-        plt.subplot(1, 2, 2)
-        reconstruct_img(model, train_features[0])
-        plt.show()
-    return model
 
 def grid_show(imgs):
     """
@@ -112,9 +81,71 @@ def reconstruct_img(model, x):
     return sample
 
 
-def compute_IS(sample):
+def show_gen_img(model, z_dim):
+    sample = generate_img(model, z_dim)
+    sample = sample.view(model.batch_size, 1, 28, 28).cpu()
+    grid_show(sample)
+
+
+def show_recon_img(model, x):
+    sample = reconstruct_img(model, x)
+    imgs = torch.cat((x.view(1, 1, 28, 28).cpu(), sample.view(1, 1, 28, 28).cpu()))
+    grid_show(imgs)
+
+
+def knn(Mxx, Mxy, Myy, k=1, sqrt=True):
     """
+    The leave-one-out accuracy of a 1-NN classifier.
+    Input: L2 distances in some feature space (important: not pixel space)
+    credit: https://github.com/xuqiantong/GAN-Metrics/blob/master/framework/metric.py
+    """
+    
+    n0 = Mxx.size(0)
+    n1 = Myy.size(0)
+    label = torch.cat((torch.ones(n0), torch.zeros(n1)))
+    M = torch.cat((torch.cat((Mxx, Mxy),1), torch.cat((Mxy.transpose(0,1), Myy), 1)), 0)
+    if sqrt:
+        M = M.abs().sqrt()
+    INFINITY = float('inf')
+    _, idx = (M + torch.diag(INFINITY * torch.ones(n0+n1))).topk(k, 0, False)
+
+    count = torch.zeros(n0 + n1)
+    for i in range(0, k):
+        count = count + label.index_select(0, idx[i])
+    pred = torch.ge(count, (float(k) / 2) * torch.ones(n0 + n1)).float()
+
+    tp = (pred * label).sum()
+    fp = (pred * (1 - label)).sum()
+    fn = ((1 - pred) * label).sum()
+    precision = tp / (tp + fp)
+    recall = tp / (tp + fn)
+    acc = torch.eq(label, pred).float().mean()
+
+    return acc, precision, recall
+
+
+def mmd(Mxx, Mxy, Myy, sigma = 1):
+    """
+    Kernel Maximum Mean Discrepancy (Gaussian kernel).
+    Input: L2 distances in some feature space (important: not pixel space)
+    credit: https://github.com/xuqiantong/GAN-Metrics/blob/master/framework/metric.py
+    """
+
+    scale = Mxx.mean()
+    Mxx = torch.exp(-Mxx / (scale * 2 * sigma ** 2))
+    Mxy = torch.exp(-Mxy / (scale * 2 * sigma ** 2))
+    Myy = torch.exp(-Myy / (scale * 2 * sigma ** 2))
+    a = Mxx.mean() + Myy.mean() - 2 * Mxy.mean()
+    mmd = max(a, 0) ** (0.5)
+
+    return mmd
+
+
+def IS(sample):
+    """
+    WIP.
     Compute the Inception Score for a batch of generated samples
+    Note: Only use with Imagenet, need to investigate minimum sample size
     """
 
     # Only compatible with MNIST for now
@@ -123,9 +154,11 @@ def compute_IS(sample):
     return inception.compute()
 
 
-def compute_FID(train, sample):
+def FID(train, sample):
     """
+    WIP.
     Compute the Frechet Inception Distance for a batch of reconstructed samples
+    Note: Only use with Imagenet, need to investigate minimum sample size
     """
 
     # Only compatible with MNIST for now
@@ -135,3 +168,77 @@ def compute_FID(train, sample):
     fid.update(img_dist1, real=True)
     fid.update(img_dist2, real=False)
     return fid.compute()
+
+
+def compute_recon_loss(model, val_dataloader):
+    """
+    Given a validation set, get all reconstructed samples and associated losses
+    """
+    
+    list_recon_loss = []
+    list_recon_samples = []
+    for val_features, _ in tqdm(val_dataloader):
+        b = val_features.shape[0]
+        val_samples = val_features.view(b, -1).cuda()
+        recon_samples = reconstruct_img(model, val_samples)
+        list_recon_samples.append((val_samples, recon_samples))
+        # loss dimension: batch size x (W x H)
+        recon_loss = model.recon_loss_f(recon_samples, val_samples, reduction="none")
+        list_recon_loss.append(recon_loss)
+
+    return (list_recon_samples, list_recon_loss)
+
+
+def reorder(list_recon_loss, by):
+    """
+    Reshape the list of reconstruction loss
+    """
+    
+    if by == "image":
+        return [img_loss.cpu() for loss in list_recon_loss for img_loss in loss.sum(1)]
+    elif by == "image_nested":
+        return [loss.sum(1).cpu() for loss in list_recon_loss]
+    elif by == "batch":
+        return [loss.sum(1).mean().cpu() for loss in list_recon_loss]
+
+
+def plot_recon_loss(recon_loss_a, recon_loss_b):
+    """
+    Plot reconstruction loss as histograms
+    """
+    
+    plt.hist(recon_loss_a, density=True)
+    plt.hist(recon_loss_b, density=True)
+    plt.show()
+            
+
+def best_batch(samples, loss_by_batch, loss_by_image_nested):
+    print("Loss on best batch:", np.min(loss_by_batch))
+    best_idx = np.argmin(loss_by_batch)
+    return (samples[best_idx], loss_by_image_nested[best_idx])
+
+
+def plot_best_batch(best_batch):
+    best_batch_in, best_batch_out = best_batch
+    best_batch_in = best_batch_in.view(64, 1, 28, 28).cpu()
+    best_batch_out = best_batch_out.view(64, 1, 28, 28).cpu()
+    grid_show(torch.cat((best_batch_in, best_batch_out), 3))
+    plt.show()
+
+
+def batch_t_test(recon_loss_a, recon_loss_b):
+    return stats.ttest_ind(recon_loss_a, recon_loss_b)
+
+
+def plot_best_images(samples, loss, n=3):
+    best_images_idx = np.argsort(loss)[:n]
+    for idx in best_images_idx:
+        print("Reconstruction loss:", loss[idx].item())
+        q, mod = divmod(idx, 64)
+        best_batch_in, best_batch_out = samples[q]
+        best_in = best_batch_in[mod]
+        best_out = best_batch_out[mod]
+        best_in = best_in.view(1, 1, 28, 28).cpu()
+        best_out = best_out.view(1, 1, 28, 28).cpu()
+        grid_show(torch.cat((best_in, best_out), 3))
+        plt.show()
