@@ -70,15 +70,13 @@ if __name__ == '__main__':
 
     z_dim = 20
     vae_ra = VAE(28 * 28, z_dim, two_layer_config, device=device, batch_size=64, recon_loss_f="mse",
-                    risk_aware="abiding", subsample=100, risk_q=0.9, batch_aware=False, ema_alpha=0.99)
-    vae_ra.fit(mnist_train, mnist_test, epochs=7)
-    # plt.subplot(1, 2, 1)
-    # reconstruct_img(vae_model, train_features[0], device=device)
-    # plt.subplot(1, 2, 2)
-    # generate_img(vae_model, z_dim, device=device)
+                    risk_aware="abiding", subsample=12, risk_q=0.9, batch_aware=False, ema_alpha=0.99,
+                 save_model=True)
+    vae_ra.fit(mnist_train, mnist_test, epochs=1)
+
     vae_vanilla = VAE(28 * 28, z_dim, two_layer_config, device=device, batch_size=64, recon_loss_f="mse",
                     risk_aware="neutral", subsample=100, risk_q=0.5)
-    vae_vanilla.fit(mnist_train, mnist_test, epochs=7)
+    vae_vanilla.fit(mnist_train, mnist_test, epochs=1)
 
     from utils import compute_recon_loss
     import numpy as np

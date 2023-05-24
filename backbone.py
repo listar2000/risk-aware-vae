@@ -91,10 +91,8 @@ class VNet(nn.Module):
 
     def evaluate(self, x):
         with torch.no_grad():
-            mu, log_var = self.encode(x)
-            z = self.reparameterize(mu, log_var, 1)
-            x_hat = self.decode(z)
-            return x_hat, mu, log_var
+            x_hat, mu, log_var = self.forward(x)
+            return x_hat.mean(1).unsqueeze(1), mu, log_var
 
 
 class VAE(object):
@@ -124,6 +122,7 @@ class VAE(object):
         self.kkl = kkl
         self.kv = kv
         self.folder_path = folder_path
+        self.file_path = None
         self.save_model = save_model
         # reconstruction loss
         self.recon_loss_f = F.binary_cross_entropy if recon_loss_f.lower() == 'bce' else F.mse_loss
@@ -264,8 +263,6 @@ class VAE(object):
         else:
             final_recon_loss = recon_loss.mean()
         kld = -0.5 * (d + self.kv * (log_var - log_var.exp()).sum() / n - mu.pow(2).sum() / n)
-        # print(final_recon_loss, kld)
-        # print(final_recon_loss / kld)
         loss = final_recon_loss + self.kkl * kld
         return loss
 
@@ -273,9 +270,13 @@ class VAE(object):
         if not self.save_model or not self.folder_path:
             return
         if not self.file_path:
-            now = datetime.datetime.now()
-            self.file_path = f'{self.folder_path}/vae_{now.strftime("%Y%m%d_%H%M%S")}.pth'
+            self.file_path = f'{self.folder_path}/{self._create_file_name()}'
         torch.save(self.model, self.file_path)
+
+    def _create_file_name(self):
+        p1 = f"b_{self.batch_size}_lr_{self.lr}_{self.risk_aware}_{self.risk_q}"
+        p2 = f"_alpha_{self.ema_alpha}_ba_{self.batch_aware}.pth"
+        return p1 + p2
 
     def initialize(self):
         """
