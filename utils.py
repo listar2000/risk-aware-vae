@@ -77,7 +77,7 @@ def reconstruct_img(model, x, device):
     """ 
 
     with torch.no_grad():
-        sample, _, _ = model.model(x.to(device))
+        sample, _, _ = model.model.evaluate(x.to(device))
     return sample.cpu()
 
 
@@ -248,7 +248,7 @@ def compute_recon_loss(model, val_dataloader, device):
         recon_loss = model.recon_loss_f(recon_samples.to(device), val_samples_expand.to(device), reduction="none")
         list_recon_loss.append(recon_loss.sum(-1).cpu())
 
-    return (list_recon_samples, list_recon_loss)
+    return list_recon_samples, list_recon_loss
 
 
 def reorder(list_recon_loss, by):

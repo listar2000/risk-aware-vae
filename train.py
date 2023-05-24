@@ -69,10 +69,33 @@ if __name__ == '__main__':
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
     z_dim = 20
-    vae_model = VAE(28 * 28, z_dim, two_layer_config, device=device, batch_size=64, recon_loss_f="bce",
-                    risk_aware="seeking", subsample=100)
-    vae_model.fit(mnist_train, mnist_test, epochs=5)
-    plt.subplot(1, 2, 1)
-    reconstruct_img(vae_model, train_features[0], device=device)
-    plt.subplot(1, 2, 2)
-    generate_img(vae_model, z_dim, device=device)
+    vae_ra = VAE(28 * 28, z_dim, two_layer_config, device=device, batch_size=64, recon_loss_f="mse",
+                    risk_aware="abiding", subsample=100, risk_q=0.9, batch_aware=False, ema_alpha=0.99)
+    vae_ra.fit(mnist_train, mnist_test, epochs=7)
+    # plt.subplot(1, 2, 1)
+    # reconstruct_img(vae_model, train_features[0], device=device)
+    # plt.subplot(1, 2, 2)
+    # generate_img(vae_model, z_dim, device=device)
+    vae_vanilla = VAE(28 * 28, z_dim, two_layer_config, device=device, batch_size=64, recon_loss_f="mse",
+                    risk_aware="neutral", subsample=100, risk_q=0.5)
+    vae_vanilla.fit(mnist_train, mnist_test, epochs=7)
+
+    from utils import compute_recon_loss
+    import numpy as np
+
+    val_dataloader = DataLoader(mnist_val, batch_size=64, shuffle=True)
+
+    # num of batch x batch size
+    recon_samples_a, list_recon_loss_a = compute_recon_loss(vae_vanilla, val_dataloader, device)
+    recon_samples_b, list_recon_loss_b = compute_recon_loss(vae_ra, val_dataloader, device)
+
+    worst_a, worst_b = [], []
+    for i in range(len(list_recon_loss_a)):
+        batch_a = list_recon_loss_a[i].flatten()
+        batch_b = list_recon_loss_b[i].flatten()
+        q_a = np.quantile(batch_a, 0.9)
+        q_b = np.quantile(batch_b, 0.9)
+        worst_a.append(torch.mean(batch_a[batch_a > q_a]).item())
+        worst_b.append(torch.mean(batch_b[batch_b > q_b]).item())
+        # worst_a.append(torch.max(batch_a).item())
+        # worst_b.append(torch.max(batch_b).item())

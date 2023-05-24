@@ -28,8 +28,7 @@ class VNet(nn.Module):
         super(VNet, self).__init__()
         self.device = device or torch.device("cpu")
         self.subsample = subsample
-        if config is None:
-            config = vanilla_config
+        assert config is not None
         # construct encoders
         enc_layers, prev_dn = [], dx
         for dn in config["enc"]:
@@ -115,7 +114,7 @@ class VAE(object):
 
     def __init__(self, n_inputs, n_components, config, lr=1.0e-3, batch_size=64, subsample=1,
                  device=None, folder_path="./checkpoints", save_model=False, kkl=1.0, kv=1.0,
-                 recon_loss_f="bce", risk_aware='neutral', risk_q=0.5, ema_alpha=0.9):
+                 recon_loss_f="bce", risk_aware='neutral', risk_q=0.5, ema_alpha=0.9, batch_aware=False):
         self.subsample = subsample
         self.model = VNet(n_inputs, n_components, device, subsample=subsample, config=config)
         self.device = device or torch.device("cpu")
@@ -132,6 +131,7 @@ class VAE(object):
         assert risk_aware in ['neutral', 'seeking', 'abiding']
         self.risk_aware = risk_aware
         self.risk_q = risk_q
+        self.batch_aware = batch_aware
         # exponential moving average for quantile
         self.ema_quantile = None
         self.ema_alpha = ema_alpha  # feel free to adjust this value
@@ -205,12 +205,12 @@ class VAE(object):
                 data = data[0].to(self.device)
                 data = data.view(data.size(0), -1)
                 recon_batch, mu, log_var = self.model.evaluate(data)
-                loss += self._loss_function(recon_batch, data, mu, log_var).item()
+                loss += self._loss_function(recon_batch, data, mu, log_var, True).item()
                 fs.append(mu)
         fs = torch.cat(fs).cpu().numpy()
         return loss / (batch_idx + 1), fs
 
-    def _loss_function(self, recon_x, x, mu, log_var):
+    def _loss_function(self, recon_x, x, mu, log_var, is_eval=False):
         """
         VAE Loss
         Parameters
@@ -228,24 +228,39 @@ class VAE(object):
         recon_loss = self.recon_loss_f(recon_x, x_expand, reduction="none")
         recon_loss = recon_loss.sum(-1)
         # compute the current batch quantile
-        if self.risk_aware in ['seeking', 'abiding']:
-            current_q = torch.quantile(recon_loss,
-                                       self.risk_q if self.risk_aware == 'seeking' else 1.0 - self.risk_q, dim=-1)
-            if self.ema_quantile is None:
-                self.ema_quantile = current_q.detach().mean()  # initialize EMA quantile
+        if self.risk_aware in ['seeking', 'abiding'] and not is_eval:
+            if not self.batch_aware:
+                current_q = torch.quantile(recon_loss,
+                                           self.risk_q if self.risk_aware == 'seeking' else 1.0 - self.risk_q, dim=-1)
+                if self.ema_quantile is None:
+                    self.ema_quantile = current_q.detach().mean()  # initialize EMA quantile
 
-            # update the EMA quantile
-            self.ema_quantile = self.ema_alpha * current_q.detach() + (1 - self.ema_alpha) * self.ema_quantile
-            q_expanded = self.ema_quantile.unsqueeze(-1).expand_as(recon_loss)
-            q_mask = recon_loss < q_expanded if self.risk_aware == 'seeking' else recon_loss > q_expanded
-            # Calculate the filtered reconstruction loss
-            filtered_recon_loss = recon_loss * q_mask
-            final_recon_loss = filtered_recon_loss.sum(1) / (q_mask.sum(1) + 1e-8)
+                # update the EMA quantile
+                self.ema_quantile = self.ema_alpha * current_q.detach() + (1 - self.ema_alpha) * self.ema_quantile
+                q_expanded = self.ema_quantile.unsqueeze(-1).expand_as(recon_loss)
+                q_mask = recon_loss < q_expanded if self.risk_aware == 'seeking' else recon_loss > q_expanded
+                # Calculate the filtered reconstruction loss
+                filtered_recon_loss = recon_loss * q_mask
+                final_recon_loss = filtered_recon_loss.sum(1) / (q_mask.sum(1) + 1e-8)
 
-            non_zero_mask = q_mask.sum(1) > 0
+                non_zero_mask = q_mask.sum(1) > 0
 
-            final_recon_loss = final_recon_loss[non_zero_mask].mean()
-            self.ema_quantile = self.ema_quantile.mean()
+                final_recon_loss = final_recon_loss[non_zero_mask].mean()
+                self.ema_quantile = self.ema_quantile.mean()
+            else:
+                recon_loss = recon_loss.mean(dim=-1)
+                current_q = torch.quantile(recon_loss,
+                                           self.risk_q if self.risk_aware == 'seeking' else 1.0 - self.risk_q)
+                if self.ema_quantile is None:
+                    self.ema_quantile = current_q.detach().mean()  # initialize EMA quantile
+                q_mask = recon_loss < self.ema_quantile if self.risk_aware == 'seeking' \
+                    else recon_loss > self.ema_quantile
+                self.ema_quantile = self.ema_alpha * current_q.detach() + (1 - self.ema_alpha) * self.ema_quantile
+
+                if not q_mask.any():
+                    final_recon_loss = recon_loss.mean()
+                else:
+                    final_recon_loss = recon_loss[q_mask].mean()
         else:
             final_recon_loss = recon_loss.mean()
         kld = -0.5 * (d + self.kv * (log_var - log_var.exp()).sum() / n - mu.pow(2).sum() / n)
