@@ -77,7 +77,7 @@ def reconstruct_img(model, x, device):
     """ 
 
     with torch.no_grad():
-        sample, _, _ = model.model.evaluate(x.to(device))
+        sample, _, _ = model.model(x.to(device))
     return sample.cpu()
 
 
@@ -232,7 +232,7 @@ def FID(train, sample):
     return fid.compute()
 
 
-def compute_recon_loss(model, val_dataloader, device):
+def compute_recon_loss(vnet, loss_f, val_dataloader, device):
     """
     Given a validation set, get all reconstructed samples and associated losses
     """
@@ -242,13 +242,13 @@ def compute_recon_loss(model, val_dataloader, device):
     for val_features, _ in tqdm(val_dataloader):
         b = val_features.shape[0]
         val_samples = val_features.view(b, -1)
-        recon_samples = reconstruct_img(model, val_samples, device)
-        list_recon_samples.append((val_samples, recon_samples))
+        recon_samples = vnet.evaluate(val_samples.to(device))[0]
+        list_recon_samples.append((val_samples, recon_samples.cpu()))
         val_samples_expand = val_samples.unsqueeze(1).expand_as(recon_samples)
-        recon_loss = model.recon_loss_f(recon_samples.to(device), val_samples_expand.to(device), reduction="none")
+        recon_loss = loss_f(recon_samples, val_samples_expand.to(device))
         list_recon_loss.append(recon_loss.sum(-1).cpu())
 
-    return list_recon_samples, list_recon_loss
+    return (list_recon_samples, list_recon_loss)
 
 
 def reorder(list_recon_loss, by):
@@ -256,11 +256,14 @@ def reorder(list_recon_loss, by):
     Reshape the list of reconstruction loss
     """
     
-    if by == "image":
+    if by == "image_nested":
+        # loss by image, orgnazied as list of batch of images
+        return [loss.mean(1).tolist() for loss in list_recon_loss]
+    elif by == "sub_sample":
         # loss by sub-sample
         return torch.vstack(list_recon_loss).flatten().tolist()
-    elif by == "image_nested":
-        # loss by sub-sample, organized in batches
+    elif by == "sub_sample_nested":
+        # loss by sub-sample, organized as list of batch of sub-samples
         return [loss.flatten().tolist() for loss in list_recon_loss]
     elif by == "batch":
         # loss by batch average
@@ -333,3 +336,49 @@ def t_test(recon_loss_a, recon_loss_b):
     conclusion = f"difference, t-statistics: {t}, p-value: {p}"
     conclusion = "Significant " + conclusion if p < 0.05 else "No significant " + conclusion
     print(conclusion)
+    
+
+def load_model(config):
+    return torch.load(f"./checkpoints/b_64_lr_0.001_{config['risk_aware']}_{config['risk_q']}_alpha_0.9_ba_{config['batch_aware']}.pth")
+
+
+def BCE_loss(samples, reconstruction):
+    return torch.nn.functional.binary_cross_entropy(samples, reconstruction, reduction="none")
+
+
+def avg_and_std(list_recon_loss, choose_best, quantiles=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]):
+    # Reorder to nested list of losses
+    list_recon_loss = reorder(list_recon_loss, by="image_nested")
+    list_recon_loss_filtered = {q: [] for q in quantiles}
+    list_mean, list_std = [], []
+    for batch in list_recon_loss:
+        batch = np.array(batch)
+        if choose_best:
+            # bottom/best q
+            for q in quantiles:
+                q_val = np.quantile(batch, q)
+                list_recon_loss_filtered[q].append(batch[batch < q_val])
+        else:
+            # top/worst q
+            for q in quantiles:
+                q_val = np.quantile(batch, 1 - q)
+                list_recon_loss_filtered[q].append(batch[batch > q_val])
+    for q in quantiles:
+        list_recon_loss_filtered_q = np.concatenate(list_recon_loss_filtered[q])
+        list_mean.append(list_recon_loss_filtered_q.mean())
+        list_std.append(list_recon_loss_filtered_q.std())
+        
+    return list_mean, list_std
+
+
+def plot_loss(list_recon_loss_a, list_recon_loss_b, choose_best, quantiles):
+    plt.style.use('seaborn-v0_8-whitegrid')
+    
+    list_mean_a, list_std_a = avg_and_std(list_recon_loss_a, choose_best, quantiles)
+    list_mean_b, list_std_b = avg_and_std(list_recon_loss_b, choose_best, quantiles)
+    
+    plt.errorbar(quantiles, list_mean_a, yerr=list_std_a, fmt='o-',
+             ecolor='lightblue', elinewidth=0, capsize=5, capthick=2)
+    plt.errorbar(quantiles, list_mean_b, yerr=list_std_b, fmt='o-', color='darkorange',
+             ecolor='orange', elinewidth=0, capsize=5, capthick=2)
+    plt.show()    

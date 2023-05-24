@@ -121,6 +121,30 @@ def read_mnist(datapath="./data", split_fraction=[0.8, 0.2]):
     return training_data, validation_data, test_data
 
 
+def read_mnist_distorted(datapath="./data", split_fraction=[0.8, 0.2]):
+    """
+    Read Distorted MNIST data. To-do.
+    """
+
+    training_data = datasets.MNIST(
+        root=datapath,
+        train=True,
+        download=True,
+        transform= transforms.Compose([transforms.RandomApply(transforms=[transforms.ElasticTransform(alpha=250.0), transforms.RandomRotation(degrees=(0, 180))], p=0.5),transforms.ToTensor()])
+    )
+
+    test_data = datasets.MNIST(
+        root=datapath,
+        train=False,
+        download=True,
+        transform=transforms.ToTensor()
+    )
+
+    training_data, validation_data = tud.random_split(training_data, split_fraction)
+
+    return training_data, validation_data, test_data
+
+
 def read_fashionmnist(datapath="./data", split_fraction=[0.8, 0.2]):
     """
     Read Fashion-MNIST data

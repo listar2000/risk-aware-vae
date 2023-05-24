@@ -29,18 +29,13 @@ two_layer_config = {
 }
 
 
-def train_VAE(model_config, train, val, verbose=False):
-    img_size = model_config["img_size"]
-    latent_dim = model_config["latent_dim"]
-    layer_config = model_config["layer_config"]
-    subsample = model_config["subsample"]
-    device = model_config["device"]
-    risk_aware = model_config["risk_aware"]
-    epochs = model_config["epochs"]
-    model = VAE(img_size, latent_dim, layer_config, subsample=subsample, device=device, risk_aware=risk_aware)
+def train_VAE(config, train, val, verbose=False):
+    model = VAE(config["img_size"], config["latent_dim"], config["layer_config"], 
+                subsample=config["subsample"], device=config["device"], risk_aware=config["risk_aware"],
+                risk_q=config["risk_q"], batch_aware=config["batch_aware"], save_model=config["save_model"])
     if verbose:
         print(model.model)
-    model.fit(train, val, epochs=epochs)
+    model.fit(train, val, epochs=config["epochs"])
     return model
     
     
