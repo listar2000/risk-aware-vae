@@ -30,9 +30,10 @@ two_layer_config = {
 
 
 def train_VAE(config, train, val, verbose=False):
-    model = VAE(config["img_size"], config["latent_dim"], config["layer_config"], 
+    model = VAE(config["img_size"], config["latent_dim"], config["layer_config"], batch_size=config["batch_size"],
                 subsample=config["subsample"], device=config["device"], risk_aware=config["risk_aware"],
-                risk_q=config["risk_q"], batch_aware=config["batch_aware"], save_model=config["save_model"])
+                recon_loss_f=config["recon_loss_f"], risk_q=config["risk_q"], batch_aware=config["batch_aware"],
+                save_model=config["save_model"])
     if verbose:
         print(model.model)
     model.fit(train, val, epochs=config["epochs"])

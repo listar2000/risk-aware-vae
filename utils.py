@@ -339,11 +339,15 @@ def t_test(recon_loss_a, recon_loss_b):
     
 
 def load_model(config):
-    return torch.load(f"./checkpoints/b_64_lr_0.001_{config['risk_aware']}_{config['risk_q']}_alpha_0.9_ba_{config['batch_aware']}.pth")
+    return torch.load(f"./checkpoints/b_{config['batch_size']}_lr_0.001_{config['risk_aware']}_{config['risk_q']}_alpha_0.9_ba_{config['batch_aware']}.pth")
 
 
 def BCE_loss(samples, reconstruction):
     return torch.nn.functional.binary_cross_entropy(samples, reconstruction, reduction="none")
+
+
+def MSE_loss(samples, reconstruction):
+    return torch.nn.functional.mse_loss(samples, reconstruction, reduction="none")
 
 
 def avg_and_std(list_recon_loss, choose_best, quantiles=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]):
@@ -365,20 +369,35 @@ def avg_and_std(list_recon_loss, choose_best, quantiles=[0.1, 0.2, 0.3, 0.4, 0.5
                 list_recon_loss_filtered[q].append(batch[batch > q_val])
     for q in quantiles:
         list_recon_loss_filtered_q = np.concatenate(list_recon_loss_filtered[q])
-        list_mean.append(list_recon_loss_filtered_q.mean())
-        list_std.append(list_recon_loss_filtered_q.std())
+        list_mean.append(list_recon_loss_filtered_q.mean() / 728)
+        list_std.append(list_recon_loss_filtered_q.std() / 728)
         
     return list_mean, list_std
 
 
-def plot_loss(list_recon_loss_a, list_recon_loss_b, choose_best, quantiles):
-    plt.style.use('seaborn-v0_8-whitegrid')
+def plot_loss(list_recon_loss_a, list_recon_loss_b, choose_best, quantiles, q, save=False):
+    # plt.style.use('seaborn-v0_8-whitegrid')
     
     list_mean_a, list_std_a = avg_and_std(list_recon_loss_a, choose_best, quantiles)
     list_mean_b, list_std_b = avg_and_std(list_recon_loss_b, choose_best, quantiles)
-    
+
+    ra_label = f"risk-seeking q = {q}" if choose_best else f"risk-averse q = {q}"
     plt.errorbar(quantiles, list_mean_a, yerr=list_std_a, fmt='o-',
-             ecolor='lightblue', elinewidth=0, capsize=5, capthick=2)
+             ecolor='lightblue', elinewidth=0, capsize=5, capthick=2, label="vanilla VAE")
     plt.errorbar(quantiles, list_mean_b, yerr=list_std_b, fmt='o-', color='darkorange',
-             ecolor='orange', elinewidth=0, capsize=5, capthick=2)
-    plt.show()    
+             ecolor='orange', elinewidth=0, capsize=5, capthick=2, label=ra_label)
+    plt.xlabel("Percentage of {}-performing losses in a batch".format("best" if choose_best else "worst"))
+    plt.ylabel("Mean of {}-performing losses in a batch".format("best" if choose_best else "worst"))
+    plt.legend()
+    if save:
+        plt.savefig("./images/" + ra_label + ".png", dpi=300)
+    plt.show()
+
+
+if __name__ == "__main__":
+    import requests
+    response = requests.get("https://raw.githubusercontent.com/listar2000/risk-aware-vae/main/train.ipynb")
+
+    if response.status_code == 200:
+        with open("train.ipynb", "wb") as file:
+            file.write(response.content)
